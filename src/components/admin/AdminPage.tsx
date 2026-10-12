@@ -5,6 +5,12 @@ import { AdminSidebar, AdminTopbar } from './AdminSidebar';
 import { AdminDashboard } from './AdminDashboard';
 import { AdminDishes } from './AdminDishes';
 import { AdminOrders } from './AdminOrders';
+import { AdminCustomers } from './AdminCustomers';
+import { AdminMenuPDF } from './AdminMenuPDF';
+import { AdminCampaigns } from './AdminCampaigns';
+import { AdminPayments } from './AdminPayments';
+import { AdminInvoices } from './AdminInvoices';
+import { AdminSettings } from './AdminSettings';
 import type { AdminView } from './AdminSidebar';
 
 export const AdminPage: React.FC = () => {
@@ -32,9 +38,15 @@ export const AdminPage: React.FC = () => {
   }
 
   const viewMap: Record<AdminView, React.ReactNode> = {
-    dashboard: <AdminDashboard />,
-    dishes: <AdminDishes />,
+    dashboard: <AdminDashboard onNavigate={(v) => setActiveView(v as AdminView)} />,
     orders: <AdminOrders />,
+    dishes: <AdminDishes />,
+    customers: <AdminCustomers />,
+    'menu-pdf': <AdminMenuPDF />,
+    messages: <AdminCampaigns />,
+    payments: <AdminPayments />,
+    invoices: <AdminInvoices />,
+    settings: <AdminSettings />,
   };
 
   return (
@@ -49,13 +61,6 @@ export const AdminPage: React.FC = () => {
 
       <div className="flex-1 flex flex-col min-w-0">
         <AdminTopbar activeView={activeView} onMenuOpen={() => setSidebarOpen(true)} />
-        {/* Desktop page title */}
-        <div className="hidden lg:block px-6 pt-6 pb-0">
-          <h1 className="text-lg font-bold text-slate-900 capitalize">
-            {activeView === 'dashboard' ? 'Dashboard' :
-             activeView === 'dishes' ? 'Dish Management' : 'Order Management'}
-          </h1>
-        </div>
         <main className="flex-1 overflow-y-auto">
           {viewMap[activeView]}
         </main>

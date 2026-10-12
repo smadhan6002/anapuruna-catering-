@@ -4,6 +4,7 @@ import { useCart } from '../context/CartContext';
 import { useLanguage } from '../context/LanguageContext';
 import { generateWhatsAppLink } from '../utils/whatsapp';
 import { orderService } from '../services/orderService';
+import { customerService } from '../services/customerService';
 import type { OrderItem } from '../types/admin';
 
 interface InquiryFormModalProps {
@@ -62,9 +63,19 @@ export const InquiryFormModal: React.FC<InquiryFormModalProps> = ({ isOpen, onCl
       categoryId: item.categoryId,
     }));
 
-    const order = orderService.create({
+    // Find or create customer record
+    const customer = customerService.findOrCreateFromOrder({
       customerName: formData.name.trim(),
       mobile: formData.phone.replace(/\s/g, ''),
+      notes: formData.notes.trim() || undefined,
+      preferredLanguage: t.lang === 'ta' ? 'ta' : 'en',
+    });
+
+    const order = orderService.create({
+      customerId: customer.id,
+      customerName: formData.name.trim(),
+      mobile: formData.phone.replace(/\s/g, ''),
+      orderSource: 'Website',
       eventAddress: formData.eventAddress.trim(),
       eventType: formData.eventType.trim(),
       orderDate: formData.eventDate,

@@ -11,15 +11,27 @@ function getCounter(): number {
   return parseInt(localStorage.getItem(ORDER_COUNTER_KEY) || '0', 10);
 }
 
-function incrementCounter(): number {
-  const next = getCounter() + 1;
-  localStorage.setItem(ORDER_COUNTER_KEY, String(next));
-  return next;
-}
+function generateOrderId(existingOrders: Order[] = []): string {
+  let counter = getCounter();
+  // Ensure counter is at least as large as any existing ORD-xxxx number
+  for (const o of existingOrders) {
+    if (o.id && o.id.startsWith('ORD-')) {
+      const parsed = parseInt(o.id.replace('ORD-', ''), 10);
+      if (!isNaN(parsed) && parsed > counter) {
+        counter = parsed;
+      }
+    }
+  }
 
-function generateOrderId(): string {
-  const n = incrementCounter();
-  return `ORD-${String(n).padStart(4, '0')}`;
+  let next = counter + 1;
+  let candidate = `ORD-${String(next).padStart(4, '0')}`;
+  while (existingOrders.some((o) => o.id === candidate)) {
+    next++;
+    candidate = `ORD-${String(next).padStart(4, '0')}`;
+  }
+
+  localStorage.setItem(ORDER_COUNTER_KEY, String(next));
+  return candidate;
 }
 
 /**
@@ -110,7 +122,8 @@ export const orderService = {
 
     const order: Order = {
       ...data,
-      id: generateOrderId(),
+      id: generateOrderId(orders),
+      orderSource: data.orderSource || 'Website',
       createdAt: new Date().toISOString(),
       invoiceGenerated: false,
       payments,

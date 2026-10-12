@@ -1,5 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Search, ChevronDown, ChevronUp, Eye, Trash2, X, Check, AlertTriangle, IndianRupee, Plus, Pencil } from 'lucide-react';
+import {
+  Search,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  Trash2,
+  X,
+  Check,
+  AlertTriangle,
+  IndianRupee,
+  Plus,
+  Pencil,
+  Download,
+  Phone,
+  MessageSquare,
+  Globe,
+  Store,
+  FileText,
+} from 'lucide-react';
 import {
   orderService,
   normalizeOrderPayments,
@@ -7,11 +25,19 @@ import {
   getOrderBalanceDue,
   getOrderPaymentStatus,
 } from '../../services/orderService';
-import type { Order, OrderStatus, OrderPayment, PaymentMethod } from '../../types/admin';
+import { invoiceService } from '../../services/invoiceService';
+import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
+import { AdminAddOrderModal } from './AdminAddOrderModal';
+import { useLanguage } from '../../context/LanguageContext';
+import type { Order, OrderStatus, OrderPayment, PaymentMethod, OrderSource } from '../../types/admin';
 import { ta } from '../../locales/ta';
 
 const ORDER_STATUSES: OrderStatus[] = [
   'Pending', 'Confirmed', 'In Preparation', 'Ready', 'Completed', 'Cancelled',
+];
+
+const ORDER_SOURCES: OrderSource[] = [
+  'Phone Call', 'WhatsApp', 'Website', 'Direct / Walk-in', 'Other',
 ];
 
 const PAYMENT_METHODS: PaymentMethod[] = [
@@ -35,11 +61,34 @@ const payStatusColors: Record<string, string> = {
   'Unpaid': 'bg-red-100 text-red-800',
 };
 
+const sourceBadgeStyles: Record<string, { bg: string; text: string; border: string }> = {
+  'Phone Call': { bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' },
+  'WhatsApp': { bg: 'bg-green-50', text: 'text-green-800', border: 'border-green-200' },
+  'Website': { bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-200' },
+  'Direct / Walk-in': { bg: 'bg-purple-50', text: 'text-purple-800', border: 'border-purple-200' },
+  'Other': { bg: 'bg-slate-50', text: 'text-slate-800', border: 'border-slate-200' },
+};
+
 function formatDate(d: string) {
   if (!d) return '';
   return new Date(d.includes('T') ? d : d + 'T00:00:00').toLocaleDateString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
   });
+}
+
+function getSourceIcon(src?: string) {
+  switch (src) {
+    case 'Phone Call':
+      return <Phone size={12} className="text-emerald-600" />;
+    case 'WhatsApp':
+      return <MessageSquare size={12} className="text-green-600" />;
+    case 'Direct / Walk-in':
+      return <Store size={12} className="text-purple-600" />;
+    case 'Website':
+      return <Globe size={12} className="text-blue-600" />;
+    default:
+      return <FileText size={12} className="text-slate-500" />;
+  }
 }
 
 // ─── ORDER DETAIL MODAL ────────────────────────────────────────────────
@@ -54,10 +103,12 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
   const [totalAmt, setTotalAmt] = useState(String(initialOrder.totalAmount || ''));
   const [payments, setPayments] = useState<OrderPayment[]>(normalizeOrderPayments(initialOrder));
   const [notes, setNotes] = useState(initialOrder.notes || '');
+  const [adminNotes, setAdminNotes] = useState(initialOrder.adminNotes || '');
   const [status, setStatus] = useState<OrderStatus>(initialOrder.status);
   const [payError, setPayError] = useState('');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState('');
+  const [downloadingInvoice, setDownloadingInvoice] = useState(false);
 
   // Payment Add / Edit Modal state
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -121,60 +172,41 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
       return;
     }
 
-    if (total <= 0) {
-      setModalError('Please set the Total Order Amount before adding payments.');
-      return;
-    }
-
-    // Other payments excluding currently edited payment
-    const otherPaymentsTotal = payments
-      .filter((p) => p.id !== editingPaymentId)
-      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-
-    const maxAllowed = total - otherPaymentsTotal;
-    if (amt > maxAllowed) {
-      if (maxAllowed <= 0) {
-        setModalError('Payment cannot exceed the total order amount.');
-      } else {
-        setModalError(`Payment amount exceeds the remaining balance of ₹${maxAllowed.toLocaleString('en-IN')}.`);
-      }
-      return;
-    }
-
     let updatedPayments: OrderPayment[];
     if (editingPaymentId) {
-      updatedPayments = payments.map((p) =>
-        p.id === editingPaymentId
-          ? {
-              ...p,
-              amount: amt,
-              date: payDateInput,
-              method: payMethodInput,
-              note: payNoteInput.trim() || undefined,
-            }
-          : p
-      );
+      updatedPayments = payments.map((p) => {
+        if (p.id === editingPaymentId) {
+          return {
+            ...p,
+            amount: amt,
+            date: payDateInput,
+            method: payMethodInput,
+            note: payNoteInput.trim() || undefined,
+          };
+        }
+        return p;
+      });
     } else {
-      const newPayment: OrderPayment = {
+      const newPay: OrderPayment = {
         id: `pay-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         amount: amt,
         date: payDateInput,
         method: payMethodInput,
         note: payNoteInput.trim() || undefined,
       };
-      updatedPayments = [...payments, newPayment];
+      updatedPayments = [...payments, newPay];
     }
 
     setPayments(updatedPayments);
     setIsPaymentModalOpen(false);
-    setEditingPaymentId(null);
 
-    // Save immediately to orderService
+    // Persist immediately
     const updated = orderService.update(order.id, {
       totalAmount: total,
       payments: updatedPayments,
       status,
       notes,
+      adminNotes,
     });
     if (updated) setOrder(updated);
     onUpdated();
@@ -187,12 +219,13 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
     setPayments(updatedPayments);
     setDeletingPaymentId(null);
 
-    // Save immediately to orderService
+    // Save immediately
     const updated = orderService.update(order.id, {
       totalAmount: total,
       payments: updatedPayments,
       status,
       notes,
+      adminNotes,
     });
     if (updated) setOrder(updated);
     onUpdated();
@@ -213,6 +246,7 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
         payments,
         status,
         notes,
+        adminNotes,
       });
       if (updated) setOrder(updated);
       onUpdated();
@@ -222,38 +256,74 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
     }
   }
 
+  function handleDownloadInvoice() {
+    setDownloadingInvoice(true);
+    try {
+      const inv = invoiceService.create(order.id);
+      generateInvoicePDF(order, inv);
+      orderService.markInvoiceGenerated(order.id);
+      onUpdated();
+      showToast('Invoice generated and downloaded.');
+    } finally {
+      setTimeout(() => setDownloadingInvoice(false), 1000);
+    }
+  }
+
+  const srcBadge = sourceBadgeStyles[order.orderSource || 'Website'] || sourceBadgeStyles['Other'];
+
   return (
     <>
-      {/* Fixed full-screen backdrop */}
-      <div
-        className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Toast */}
+      {/* Toast Notification */}
       {toast && (
-        <div className="fixed top-4 right-4 z-[200] bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium">
-          <Check size={16} /> {toast}
+        <div className="fixed top-4 right-4 z-[200] bg-slate-900 text-white px-5 py-3 rounded-xl shadow-xl flex items-center gap-2 text-sm">
+          <Check size={16} className="text-green-400" />
+          <span>{toast}</span>
         </div>
       )}
 
+      {/* Backdrop */}
+      <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+
       {/* Scrollable modal wrapper */}
-      <div className="fixed inset-0 z-[101] flex items-start justify-center p-4 pt-8 overflow-y-auto pointer-events-none">
-        <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-4 overflow-hidden pointer-events-auto">
+      <div className="fixed inset-0 z-[101] flex items-start justify-center p-3 sm:p-4 pt-6 overflow-y-auto pointer-events-none">
+        <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-4 overflow-hidden pointer-events-auto border border-slate-100">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50">
-            <div>
-              <h3 className="font-bold text-slate-900 text-lg">{order.id}</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Created: {formatDate(order.createdAt)}</p>
+            <div className="flex items-center gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-slate-900 text-lg">{order.id}</h3>
+                  <span
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${srcBadge.bg} ${srcBadge.text} ${srcBadge.border}`}
+                  >
+                    {getSourceIcon(order.orderSource)}
+                    {order.orderSource || 'Website'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">Created: {formatDate(order.createdAt)}</p>
+              </div>
             </div>
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-200/60 transition-colors">
-              <X size={20} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDownloadInvoice}
+                disabled={downloadingInvoice}
+                className="px-3 py-1.5 text-xs font-semibold text-primary bg-orange-50 hover:bg-orange-100 border border-orange-200/60 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Download size={14} />
+                <span>{downloadingInvoice ? 'Generating…' : 'Invoice PDF'}</span>
+              </button>
+              <button
+                onClick={onClose}
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-200/60 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
-          <div className="p-6 space-y-6">
+          <div className="p-6 space-y-6 max-h-[82vh] overflow-y-auto">
             {/* Customer Info */}
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-2 gap-4 text-sm bg-slate-50/70 p-4 rounded-xl border border-slate-100">
               <div>
                 <p className="text-slate-500 text-xs mb-0.5">Customer Name</p>
                 <p className="font-semibold text-slate-900">{order.customerName}</p>
@@ -261,17 +331,20 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
               <div>
                 <p className="text-slate-500 text-xs mb-0.5">Mobile Number</p>
                 <p className="font-semibold text-slate-900">{order.mobile}</p>
+                {order.alternativeMobile && (
+                  <p className="text-xs text-slate-400">Alt: {order.alternativeMobile}</p>
+                )}
               </div>
               <div>
-                <p className="text-slate-500 text-xs mb-0.5">Order / Event Date</p>
-                <p className="font-semibold text-slate-900">{formatDate(order.orderDate)}</p>
+                <p className="text-slate-500 text-xs mb-0.5">Order Source</p>
+                <p className="font-semibold text-slate-900">{order.orderSource || 'Website'}</p>
               </div>
-              {order.eventType && (
-                <div>
-                  <p className="text-slate-500 text-xs mb-0.5">Event Type</p>
-                  <p className="font-semibold text-slate-900">{order.eventType}</p>
-                </div>
-              )}
+              <div>
+                <p className="text-slate-500 text-xs mb-0.5">Delivery Date & Time</p>
+                <p className="font-semibold text-slate-900">
+                  {formatDate(order.orderDate)} {order.deliveryTime ? `• ${order.deliveryTime}` : ''}
+                </p>
+              </div>
               {order.eventAddress && (
                 <div className="col-span-2">
                   <p className="text-slate-500 text-xs mb-0.5">Delivery Address</p>
@@ -286,18 +359,51 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
               )}
             </div>
 
-            {/* Selected Dishes */}
-            <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-              <h4 className="text-xs font-bold text-primary uppercase tracking-wider mb-3">Selected Dishes ({order.items.length})</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {/* Selected Dishes & Flexible Quantities */}
+            <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2">
+              <h4 className="text-xs font-bold text-primary uppercase tracking-wider mb-2">
+                Selected Dishes & Measurement Units ({order.items.length})
+              </h4>
+              <div className="space-y-2">
                 {order.items.map((item, i) => {
-                  const tamilName = ta.dishTranslationsByEnglishName?.[item.dishName] || (item.dishId && ta.dishes[item.dishId]);
+                  const tamilName =
+                    ta.dishTranslationsByEnglishName?.[item.dishName] ||
+                    (item.dishId && (ta.dishes as Record<string, string>)[item.dishId]);
+
+                  // Look up quantity and unit
+                  const matchedFq = order.foodQuantities?.find(
+                    (fq) => fq.dishId === item.dishId || fq.dishName === item.dishName
+                  );
+                  const qty = item.quantity ?? matchedFq?.quantity;
+                  const unit = item.unit ?? matchedFq?.unit;
+                  const itemNote = item.notes ?? matchedFq?.note;
+
                   return (
-                    <div key={i} className="flex items-center text-sm text-slate-800">
-                      <span className="text-primary mr-2">•</span>
-                      <span className="font-medium">{item.dishName}</span>
-                      {tamilName && (
-                        <span className="text-xs text-slate-500 font-normal ml-1.5">({tamilName})</span>
+                    <div
+                      key={i}
+                      className="flex items-center justify-between text-sm bg-white p-3 rounded-xl border border-slate-100 shadow-xs"
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-primary font-bold mr-1">{i + 1}.</span>
+                          <span className="font-semibold text-slate-900">{item.dishName}</span>
+                          {tamilName && (
+                            <span className="text-xs text-slate-500 font-normal">
+                              ({tamilName})
+                            </span>
+                          )}
+                        </div>
+                        {itemNote && (
+                          <p className="text-[11px] text-slate-500 italic ml-5 mt-0.5">
+                            Note: {itemNote}
+                          </p>
+                        )}
+                      </div>
+
+                      {qty !== undefined && qty !== null && (
+                        <span className="font-bold text-slate-900 bg-orange-50 text-orange-950 px-2.5 py-1 rounded-lg text-xs border border-orange-200/60 whitespace-nowrap">
+                          {qty} {unit || 'Units'}
+                        </span>
                       )}
                     </div>
                   );
@@ -305,29 +411,31 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
               </div>
             </div>
 
-            {/* Additional Food Quantities */}
-            {order.foodQuantities && order.foodQuantities.length > 0 && (
-              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                <h4 className="text-xs font-bold text-primary uppercase tracking-wider mb-3">Additional Food Quantities</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {order.foodQuantities.map((fq, i) => {
-                    const tamilName = ta.dishTranslationsByEnglishName?.[fq.dishName] || (fq.dishId && ta.dishes[fq.dishId]);
-                    return (
-                      <div key={i} className="flex items-center justify-between text-sm text-slate-800 bg-white px-3 py-2 border border-slate-100 rounded-lg shadow-sm">
-                        <div className="flex items-center truncate mr-2">
-                          <span className="text-primary mr-2">•</span>
-                          <span className="font-medium truncate">{fq.dishName}</span>
-                          {tamilName && (
-                            <span className="text-xs text-slate-500 font-normal ml-1.5 flex-shrink-0">({tamilName})</span>
-                          )}
+            {/* Additional Food Quantities (Legacy kg items if distinct) */}
+            {order.foodQuantities &&
+              order.foodQuantities.length > 0 &&
+              order.foodQuantities.some((fq) => !order.items.some((it) => it.dishId === fq.dishId)) && (
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2">
+                  <h4 className="text-xs font-bold text-primary uppercase tracking-wider mb-2">
+                    Additional Quantities
+                  </h4>
+                  <div className="space-y-2">
+                    {order.foodQuantities
+                      .filter((fq) => !order.items.some((it) => it.dishId === fq.dishId))
+                      .map((fq, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between text-sm bg-white p-2.5 rounded-lg border border-slate-100"
+                        >
+                          <span className="font-medium text-slate-800">{fq.dishName}</span>
+                          <span className="font-bold text-slate-900">
+                            {fq.quantity} {fq.unit}
+                          </span>
                         </div>
-                        <span className="font-bold text-slate-900 flex-shrink-0">{fq.quantity} kg</span>
-                      </div>
-                    );
-                  })}
+                      ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
             {/* PAYMENT DETAILS - MULTIPLE SPLIT PAYMENTS SYSTEM */}
             <div className="border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4">
@@ -336,7 +444,9 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
                   <h4 className="text-xs font-bold text-primary uppercase tracking-wider">Payment Details</h4>
                   <p className="text-xs text-slate-500 mt-0.5">Record customer installment and advance payments</p>
                 </div>
-                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${payStatusColors[currentPayStatus]}`}>
+                <span
+                  className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${payStatusColors[currentPayStatus]}`}
+                >
                   {currentPayStatus}
                 </span>
               </div>
@@ -380,51 +490,44 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
                 </div>
 
                 {payments.length === 0 ? (
-                  <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl p-5 text-center text-slate-400">
-                    <p className="text-xs font-medium text-slate-600">No payments recorded yet</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">Click <strong>+ Add Payment</strong> to record an advance or installment</p>
+                  <div className="py-6 text-center text-xs text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                    No payments recorded yet. Click "Add Payment" to record an advance.
                   </div>
                 ) : (
-                  <div className="space-y-2.5">
-                    {payments.map((p, idx) => (
+                  <div className="space-y-2">
+                    {payments.map((p) => (
                       <div
-                        key={p.id || idx}
-                        className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-300 transition-colors"
+                        key={p.id}
+                        className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs"
                       >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-bold text-slate-800">Payment #{idx + 1}</span>
-                            <span className="inline-block px-2 py-0.5 bg-white border border-slate-200 text-slate-700 rounded text-[11px] font-medium">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 text-sm">
+                              ₹{Number(p.amount).toLocaleString('en-IN')}
+                            </span>
+                            <span className="bg-white border border-slate-200 px-2 py-0.5 rounded text-slate-700 font-medium">
                               {p.method}
                             </span>
-                            <span className="text-xs text-slate-400">·</span>
-                            <span className="text-xs text-slate-500">{formatDate(p.date)}</span>
+                            <span className="text-slate-400">{p.date}</span>
                           </div>
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-base font-bold text-slate-900">₹{p.amount.toLocaleString('en-IN')}</span>
-                            {p.note && (
-                              <span className="text-xs text-slate-600 italic">
-                                — {p.note}
-                              </span>
-                            )}
-                          </div>
+                          {p.note && <p className="text-slate-500 mt-1 italic">{p.note}</p>}
                         </div>
-                        <div className="flex items-center gap-2 self-end sm:self-center">
+                        <div className="flex items-center gap-1">
                           <button
                             type="button"
                             onClick={() => openEditPaymentModal(p)}
-                            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer"
+                            className="p-1.5 text-slate-500 hover:text-primary rounded"
+                            title="Edit payment"
                           >
-                            <Pencil size={12} />
-                            Edit
+                            <Pencil size={13} />
                           </button>
                           <button
                             type="button"
                             onClick={() => setDeletingPaymentId(p.id)}
-                            className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer"
+                            className="p-1.5 text-slate-400 hover:text-red-600 rounded"
+                            title="Delete payment"
                           >
-                            <Trash2 size={12} />
-                            Delete
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       </div>
@@ -433,8 +536,12 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
                 )}
               </div>
 
-              {/* Automatic Ledger Summary */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5 text-sm">
+              {/* Dynamic Summary Box */}
+              <div className="bg-slate-50 rounded-xl p-3.5 space-y-2 border border-slate-100">
+                <div className="flex justify-between items-center text-slate-600 text-xs">
+                  <span>Total Amount:</span>
+                  <span className="font-bold text-sm text-slate-900">₹{total.toLocaleString('en-IN')}</span>
+                </div>
                 <div className="flex justify-between items-center text-slate-600 text-xs">
                   <span>Total Paid:</span>
                   <span className="font-bold text-sm text-green-700">₹{currentTotalPaid.toLocaleString('en-IN')}</span>
@@ -461,19 +568,38 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
                   onChange={(e) => setStatus(e.target.value as OrderStatus)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 bg-white"
                 >
-                  {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  {ORDER_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">Notes</label>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Customer Instructions / Notes
+              </label>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                rows={3}
+                rows={2}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
-                placeholder="Delivery instructions, payment notes, special requests…"
+                placeholder="Customer instructions, allergies, delivery requests…"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Internal Admin Notes
+              </label>
+              <textarea
+                value={adminNotes}
+                onChange={(e) => setAdminNotes(e.target.value)}
+                rows={2}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none bg-slate-50/50"
+                placeholder="Internal catering notes, cook assigned, vessel return reminders…"
               />
             </div>
 
@@ -482,7 +608,7 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="w-full bg-primary hover:bg-primary/90 disabled:opacity-60 text-white py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer"
+                className="w-full bg-primary hover:bg-primary/90 disabled:opacity-60 text-white py-2.5 rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-sm"
               >
                 {saving ? 'Saving…' : 'Save Changes'}
               </button>
@@ -583,7 +709,7 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-medium transition-colors shadow-sm"
+                  className="flex-1 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm"
                 >
                   Save Payment
                 </button>
@@ -630,12 +756,18 @@ const OrderDetail: React.FC<OrderDetailProps> = ({ order: initialOrder, onClose,
 
 // ─── MAIN ORDERS LIST ─────────────────────────────────────────────────
 export const AdminOrders: React.FC = () => {
+  const { lang } = useLanguage();
+  const isTa = lang === 'ta';
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | ''>('');
+  const [sourceFilter, setSourceFilter] = useState<OrderSource | ''>('');
+  const [deliveryDateFilter, setDeliveryDateFilter] = useState<string>('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [expandedMobile, setExpandedMobile] = useState<string | null>(null);
+  const [isAddOrderModalOpen, setIsAddOrderModalOpen] = useState(false);
 
   function loadOrders() {
     setOrders(orderService.getAll().sort(
@@ -647,9 +779,17 @@ export const AdminOrders: React.FC = () => {
 
   const filtered = orders.filter((o) => {
     const q = search.toLowerCase();
-    const matchSearch = !q || o.id.toLowerCase().includes(q) || o.customerName.toLowerCase().includes(q) || o.mobile.includes(q);
+    const matchSearch =
+      !q ||
+      o.id.toLowerCase().includes(q) ||
+      o.customerName.toLowerCase().includes(q) ||
+      o.mobile.includes(q);
+
     const matchStatus = !statusFilter || o.status === statusFilter;
-    return matchSearch && matchStatus;
+    const matchSource = !sourceFilter || (o.orderSource || 'Website') === sourceFilter;
+    const matchDate = !deliveryDateFilter || o.orderDate === deliveryDateFilter;
+
+    return matchSearch && matchStatus && matchSource && matchDate;
   });
 
   function handleDelete(id: string) {
@@ -659,56 +799,112 @@ export const AdminOrders: React.FC = () => {
   }
 
   return (
-    <div className="p-4 md:p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 md:p-6 space-y-6">
+      {/* Header with Prominent Add New Order Button */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900">Orders</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{orders.length} total order(s)</p>
+          <h2 className="text-xl font-bold text-slate-900">
+            {isTa ? 'ஆர்டர்கள் மேலாண்மை' : 'Orders'}
+          </h2>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {orders.length} {isTa ? 'மொத்த ஆர்டர்கள்' : 'total order(s)'}
+          </p>
         </div>
+
+        <button
+          onClick={() => setIsAddOrderModalOpen(true)}
+          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary/90 text-white font-semibold text-sm rounded-xl shadow-sm hover:shadow transition-all cursor-pointer"
+        >
+          <Plus size={18} />
+          <span>{isTa ? 'புதிய ஆர்டர் சேர்க்க' : 'Add New Order'}</span>
+        </button>
       </div>
 
-      {/* Search & Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-5">
-        <div className="relative flex-1">
+      {/* Search & Multifaceted Filters (Requirement 1.12) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="relative">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, mobile, order ID…"
-            className="w-full pl-9 pr-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            placeholder={isTa ? 'பெயர், எண், ஆர்டர் ID தேடவும்…' : 'Search by name, mobile, order ID…'}
+            className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
+
+        {/* Order Source Filter */}
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value as any)}
+          className="px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/40 font-medium"
+        >
+          <option value="">{isTa ? 'அனைத்து மூலங்கள் (Sources)' : 'All Order Sources'}</option>
+          {ORDER_SOURCES.map((src) => (
+            <option key={src} value={src}>{src}</option>
+          ))}
+        </select>
+
+        {/* Order Status Filter */}
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as OrderStatus | '')}
-          className="px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/40"
+          className="px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/40 font-medium"
         >
-          <option value="">All Statuses</option>
-          {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="">{isTa ? 'அனைத்து நிலைகள்' : 'All Statuses'}</option>
+          {ORDER_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
         </select>
+
+        {/* Delivery Date Filter */}
+        <div className="relative">
+          <input
+            type="date"
+            value={deliveryDateFilter}
+            onChange={(e) => setDeliveryDateFilter(e.target.value)}
+            className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/40 text-slate-700"
+            title="Filter by delivery date"
+          />
+          {deliveryDateFilter && (
+            <button
+              onClick={() => setDeliveryDateFilter('')}
+              className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-700"
+            >
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="bg-white rounded-xl border border-slate-100 py-12 text-center text-slate-400">
-          <p className="text-sm">{orders.length === 0 ? 'No orders yet. Customer orders will appear here.' : 'No orders match your search.'}</p>
+        <div className="bg-white rounded-2xl border border-slate-100 py-16 text-center text-slate-400">
+          <FileText size={44} className="mx-auto mb-3 text-slate-200" />
+          <p className="text-base font-semibold text-slate-600">
+            {orders.length === 0
+              ? isTa ? 'ஆர்டர்கள் எதுவும் இல்லை' : 'No orders yet.'
+              : isTa ? 'பொருத்தமான ஆர்டர்கள் எதுவும் இல்லை' : 'No orders match your search filters.'}
+          </p>
+          <p className="text-xs text-slate-400 mt-1">
+            {orders.length === 0 ? 'Click "Add New Order" to create a phone order.' : 'Try adjusting the search criteria.'}
+          </p>
         </div>
       ) : (
         <>
           {/* Desktop Table */}
-          <div className="hidden md:block bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 border-b border-slate-100">
+                <thead className="bg-slate-50 border-b border-slate-100 text-xs text-slate-600 uppercase font-semibold">
                   <tr>
-                    <th className="px-5 py-3 text-left font-semibold text-slate-600">Order ID</th>
-                    <th className="px-5 py-3 text-left font-semibold text-slate-600">Customer</th>
-                    <th className="px-5 py-3 text-left font-semibold text-slate-600">Mobile</th>
-                    <th className="px-5 py-3 text-left font-semibold text-slate-600">Order Date</th>
-                    <th className="px-5 py-3 text-left font-semibold text-slate-600">Items</th>
-                    <th className="px-5 py-3 text-left font-semibold text-slate-600">Payment</th>
-                    <th className="px-5 py-3 text-left font-semibold text-slate-600">Status</th>
-                    <th className="px-5 py-3 text-left font-semibold text-slate-600">Actions</th>
+                    <th className="px-5 py-3.5 text-left">Order ID</th>
+                    <th className="px-5 py-3.5 text-left">Customer</th>
+                    <th className="px-5 py-3.5 text-left">Source</th>
+                    <th className="px-5 py-3.5 text-left">Delivery Date</th>
+                    <th className="px-5 py-3.5 text-left">Items & Quantities</th>
+                    <th className="px-5 py-3.5 text-left">Payment</th>
+                    <th className="px-5 py-3.5 text-left">Status</th>
+                    <th className="px-5 py-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -716,22 +912,41 @@ export const AdminOrders: React.FC = () => {
                     const paid = getOrderTotalPaid(order);
                     const balance = getOrderBalanceDue(order);
                     const pStatus = getOrderPaymentStatus(order);
+                    const src = order.orderSource || 'Website';
+                    const srcStyle = sourceBadgeStyles[src] || sourceBadgeStyles['Other'];
+
                     return (
-                      <tr key={order.id} className="hover:bg-slate-50">
-                        <td className="px-5 py-3 font-mono text-slate-700">{order.id}</td>
-                        <td className="px-5 py-3 font-medium text-slate-900">{order.customerName}</td>
-                        <td className="px-5 py-3 text-slate-600">{order.mobile}</td>
-                        <td className="px-5 py-3 text-slate-600">{formatDate(order.orderDate)}</td>
-                        <td className="px-5 py-3 text-slate-600">
-                          {order.items.length} dish(es)
-                          {order.foodQuantities && order.foodQuantities.length > 0 && (
-                            <span className="block text-[11px] text-slate-400 mt-0.5">
-                              + {order.foodQuantities.length} kg item(s)
-                            </span>
+                      <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="px-5 py-3.5 font-mono text-primary font-bold text-xs">{order.id}</td>
+                        <td className="px-5 py-3.5">
+                          <p className="font-bold text-slate-900">{order.customerName}</p>
+                          <p className="text-xs text-slate-500">{order.mobile}</p>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${srcStyle.bg} ${srcStyle.text} ${srcStyle.border}`}
+                          >
+                            {getSourceIcon(src)}
+                            <span>{src}</span>
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5 text-slate-700 text-xs font-medium">
+                          {formatDate(order.orderDate)}
+                          {order.deliveryTime && (
+                            <span className="block text-slate-400 font-normal">{order.deliveryTime}</span>
                           )}
                         </td>
-                        <td className="px-5 py-3">
-                          <p className="font-semibold text-slate-900">
+                        <td className="px-5 py-3.5 text-slate-700">
+                          <span className="font-semibold text-slate-900">{order.items.length} dish(es)</span>
+                          {order.foodQuantities && order.foodQuantities.length > 0 && (
+                            <div className="text-[11px] text-slate-500 mt-0.5 max-w-[200px] truncate">
+                              {order.foodQuantities.slice(0, 2).map((fq) => `${fq.dishName} (${fq.quantity} ${fq.unit})`).join(', ')}
+                              {order.foodQuantities.length > 2 && ` +${order.foodQuantities.length - 2} more`}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <p className="font-bold text-slate-900">
                             ₹{paid.toLocaleString('en-IN')}{' '}
                             <span className="font-normal text-slate-400">/ ₹{order.totalAmount.toLocaleString('en-IN')}</span>
                           </p>
@@ -742,24 +957,24 @@ export const AdminOrders: React.FC = () => {
                             </span>
                           </div>
                         </td>
-                        <td className="px-5 py-3">
-                          <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${statusColor[order.status]}`}>
+                        <td className="px-5 py-3.5">
+                          <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${statusColor[order.status]}`}>
                             {order.status}
                           </span>
                         </td>
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-2">
+                        <td className="px-5 py-3.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => setSelectedOrder(order)}
-                              className="text-blue-600 hover:text-blue-800 p-1"
+                              className="p-1.5 text-slate-500 hover:text-primary hover:bg-orange-50 rounded-lg transition-colors cursor-pointer"
                               title="View Details"
                             >
                               <Eye size={16} />
                             </button>
                             <button
                               onClick={() => setDeleteConfirm(order.id)}
-                              className="text-red-500 hover:text-red-700 p-1"
-                              title="Delete"
+                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete Order"
                             >
                               <Trash2 size={16} />
                             </button>
@@ -779,15 +994,26 @@ export const AdminOrders: React.FC = () => {
               const paid = getOrderTotalPaid(order);
               const balance = getOrderBalanceDue(order);
               const pStatus = getOrderPaymentStatus(order);
+              const src = order.orderSource || 'Website';
+              const srcStyle = sourceBadgeStyles[src] || sourceBadgeStyles['Other'];
+
               return (
-                <div key={order.id} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                <div key={order.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                   <div
-                    className="flex items-center justify-between px-4 py-3 cursor-pointer"
+                    className="flex items-center justify-between px-4 py-3.5 cursor-pointer"
                     onClick={() => setExpandedMobile(expandedMobile === order.id ? null : order.id)}
                   >
                     <div>
-                      <p className="font-mono text-sm font-semibold text-slate-700">{order.id}</p>
-                      <p className="text-sm text-slate-900">{order.customerName}</p>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-primary">{order.id}</span>
+                        <span
+                          className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${srcStyle.bg} ${srcStyle.text} ${srcStyle.border}`}
+                        >
+                          {getSourceIcon(src)}
+                          {src}
+                        </span>
+                      </div>
+                      <p className="text-sm font-bold text-slate-900 mt-1">{order.customerName}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${statusColor[order.status]}`}>
@@ -798,42 +1024,37 @@ export const AdminOrders: React.FC = () => {
                   </div>
                   {expandedMobile === order.id && (
                     <div className="px-4 pb-4 pt-0 space-y-2 border-t border-slate-100">
-                      <div className="text-sm text-slate-600 space-y-1.5 pt-2">
-                        <p><span className="font-medium">Mobile:</span> {order.mobile}</p>
-                        <p><span className="font-medium">Order Date:</span> {formatDate(order.orderDate)}</p>
+                      <div className="text-xs sm:text-sm text-slate-600 space-y-1.5 pt-2">
+                        <p><span className="font-semibold text-slate-700">Mobile:</span> {order.mobile}</p>
+                        <p><span className="font-semibold text-slate-700">Delivery Date:</span> {formatDate(order.orderDate)}</p>
                         <p>
-                          <span className="font-medium">Items:</span> {order.items.length} dish(es)
+                          <span className="font-semibold text-slate-700">Items:</span> {order.items.length} dish(es)
                           {order.foodQuantities && order.foodQuantities.length > 0 && (
                             <span className="text-slate-500 text-xs ml-1">
-                              (+ {order.foodQuantities.length} kg)
+                              (+ {order.foodQuantities.length} custom unit items)
                             </span>
                           )}
                         </p>
                         <p>
-                          <span className="font-medium">Payment:</span>{' '}
-                          <strong className="text-slate-900">₹{paid.toLocaleString('en-IN')}</strong> / ₹{order.totalAmount.toLocaleString('en-IN')}
+                          <span className="font-semibold text-slate-700">Payment:</span>{' '}
+                          <strong className="text-slate-900">₹{paid.toLocaleString('en-IN')}</strong> / ₹{order.totalAmount.toLocaleString('en-IN')}{' '}
+                          <span className="text-[11px] font-semibold text-slate-500">({pStatus})</span>
                         </p>
                         <p>
-                          <span className="font-medium">Balance Due:</span>{' '}
+                          <span className="font-semibold text-slate-700">Balance Due:</span>{' '}
                           <strong className="text-slate-900">₹{balance.toLocaleString('en-IN')}</strong>
-                        </p>
-                        <p className="flex items-center gap-1.5">
-                          <span className="font-medium">Status:</span>
-                          <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${payStatusColors[pStatus]}`}>
-                            {pStatus}
-                          </span>
                         </p>
                       </div>
                       <div className="flex gap-2 pt-2">
                         <button
                           onClick={() => setSelectedOrder(order)}
-                          className="flex-1 flex items-center justify-center gap-1.5 bg-blue-50 text-blue-700 py-2 rounded-lg text-sm font-medium"
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-orange-50 text-primary py-2 rounded-xl text-xs font-semibold cursor-pointer"
                         >
-                          <Eye size={14} /> View
+                          <Eye size={14} /> View Details
                         </button>
                         <button
                           onClick={() => setDeleteConfirm(order.id)}
-                          className="flex-1 flex items-center justify-center gap-1.5 bg-red-50 text-red-600 py-2 rounded-lg text-sm font-medium"
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-red-50 text-red-600 py-2 rounded-xl text-xs font-semibold cursor-pointer"
                         >
                           <Trash2 size={14} /> Delete
                         </button>
@@ -845,6 +1066,20 @@ export const AdminOrders: React.FC = () => {
             })}
           </div>
         </>
+      )}
+
+      {/* Manual Order Creation Modal */}
+      {isAddOrderModalOpen && (
+        <AdminAddOrderModal
+          isOpen={isAddOrderModalOpen}
+          onClose={() => setIsAddOrderModalOpen(false)}
+          onOrderSaved={(newOrder, openDetail) => {
+            loadOrders();
+            if (openDetail) {
+              setSelectedOrder(newOrder);
+            }
+          }}
+        />
       )}
 
       {/* Order Detail Modal */}
@@ -866,10 +1101,22 @@ export const AdminOrders: React.FC = () => {
           <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <h3 className="font-semibold text-slate-900 mb-2">Delete Order</h3>
-            <p className="text-sm text-slate-600 mb-5">Are you sure you want to delete order <strong>{deleteConfirm}</strong>? This cannot be undone.</p>
+            <p className="text-sm text-slate-600 mb-5">
+              Are you sure you want to delete order <strong>{deleteConfirm}</strong>? This cannot be undone.
+            </p>
             <div className="flex gap-3">
-              <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-2.5 border border-slate-300 rounded-xl text-sm text-slate-700 hover:bg-slate-50">Cancel</button>
-              <button onClick={() => handleDelete(deleteConfirm)} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-medium">Delete</button>
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="flex-1 py-2.5 border border-slate-300 rounded-xl text-sm text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(deleteConfirm)}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-medium cursor-pointer"
+              >
+                Delete
+              </button>
             </div>
           </div>
         </div>

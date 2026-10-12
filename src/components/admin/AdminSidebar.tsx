@@ -1,9 +1,35 @@
 import React from 'react';
-import { LayoutDashboard, UtensilsCrossed, ClipboardList, LogOut, X, Menu } from 'lucide-react';
+import {
+  LayoutDashboard,
+  UtensilsCrossed,
+  ClipboardList,
+  Users,
+  FileDown,
+  MessageSquare,
+  IndianRupee,
+  FileText,
+  Settings,
+  LogOut,
+  X,
+  Menu,
+  Globe,
+  ArrowLeft,
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { siteConfig } from '../../config/site';
-import logoImg from '../../assets/Catering Logo.jpeg';
+import { useLanguage } from '../../context/LanguageContext';
+import logoImg from '../../assets/LOGO.png';
 
-export type AdminView = 'dashboard' | 'dishes' | 'orders';
+export type AdminView =
+  | 'dashboard'
+  | 'orders'
+  | 'dishes'
+  | 'customers'
+  | 'menu-pdf'
+  | 'messages'
+  | 'payments'
+  | 'invoices'
+  | 'settings';
 
 interface AdminSidebarProps {
   activeView: AdminView;
@@ -13,12 +39,6 @@ interface AdminSidebarProps {
   onClose: () => void;
 }
 
-const navItems: { view: AdminView; label: string; icon: React.ReactNode }[] = [
-  { view: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
-  { view: 'dishes', label: 'Dishes', icon: <UtensilsCrossed size={18} /> },
-  { view: 'orders', label: 'Orders', icon: <ClipboardList size={18} /> },
-];
-
 export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   activeView,
   onNavigate,
@@ -26,17 +46,33 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   isOpen,
   onClose,
 }) => {
+  const navigate = useNavigate();
+  const { lang, setLang } = useLanguage();
+  const isTa = lang === 'ta';
+
+  const navItems: { view: AdminView; labelEn: string; labelTa: string; icon: React.ReactNode }[] = [
+    { view: 'dashboard', labelEn: 'Dashboard', labelTa: 'டாஷ்போர்டு', icon: <LayoutDashboard size={18} /> },
+    { view: 'orders', labelEn: 'Orders', labelTa: 'ஆர்டர்கள்', icon: <ClipboardList size={18} /> },
+    { view: 'dishes', labelEn: 'Dishes', labelTa: 'உணவு வகைகள்', icon: <UtensilsCrossed size={18} /> },
+    { view: 'customers', labelEn: 'Customers', labelTa: 'வாடிக்கையாளர்கள்', icon: <Users size={18} /> },
+    { view: 'menu-pdf', labelEn: 'Food Menu PDF', labelTa: 'உணவு மெனு PDF', icon: <FileDown size={18} /> },
+    { view: 'messages', labelEn: 'Customer Messages', labelTa: 'வாடிக்கையாளர் செய்திகள்', icon: <MessageSquare size={18} /> },
+    { view: 'payments', labelEn: 'Payments', labelTa: 'கட்டணங்கள்', icon: <IndianRupee size={18} /> },
+    { view: 'invoices', labelEn: 'Invoices', labelTa: 'இன்வாய்ஸ்கள்', icon: <FileText size={18} /> },
+    { view: 'settings', labelEn: 'Settings', labelTa: 'அமைப்புகள்', icon: <Settings size={18} /> },
+  ];
+
   const content = (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-white">
       {/* Header */}
-      <div className="flex items-center justify-between p-5 border-b border-slate-200">
+      <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-200">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl overflow-hidden shadow-sm border border-slate-200/50 flex items-center justify-center bg-white flex-shrink-0">
+          <div className="w-10 h-10 rounded-xl overflow-hidden shadow-xs border border-slate-200/50 flex items-center justify-center bg-white flex-shrink-0">
             <img src={logoImg} alt={siteConfig.name} className="w-full h-full object-contain p-0.5" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900 truncate">{siteConfig.name}</p>
-            <p className="text-xs text-slate-500">Admin Panel</p>
+            <p className="text-sm font-bold text-slate-900 truncate">{siteConfig.name}</p>
+            <p className="text-xs text-slate-500">{isTa ? 'நிர்வாகப் பலகை' : 'Admin Panel'}</p>
           </div>
         </div>
         {/* Close button — mobile only */}
@@ -45,32 +81,71 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
         </button>
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+      {/* Language Toggle in Sidebar */}
+      <div className="px-4 pt-3 pb-1">
+        <div className="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-200/80 text-xs font-semibold">
+          <span className="text-slate-500 flex items-center gap-1.5">
+            <Globe size={14} className="text-primary" />
+            <span>{isTa ? 'மொழி:' : 'Language:'}</span>
+          </span>
+          <div className="flex gap-1">
+            <button
+              onClick={() => setLang('ta')}
+              className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                isTa ? 'bg-primary text-white shadow-xs' : 'text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              தமிழ்
+            </button>
+            <button
+              onClick={() => setLang('en')}
+              className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                !isTa ? 'bg-primary text-white shadow-xs' : 'text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              EN
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {navItems.map((item) => (
           <button
             key={item.view}
-            onClick={() => { onNavigate(item.view); onClose(); }}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors text-left ${
+            onClick={() => {
+              onNavigate(item.view);
+              onClose();
+            }}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors text-left cursor-pointer ${
               activeView === item.view
                 ? 'bg-primary text-white shadow-sm'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
             {item.icon}
-            {item.label}
+            <span>{isTa ? item.labelTa : item.labelEn}</span>
           </button>
         ))}
       </nav>
 
-      {/* Logout */}
-      <div className="p-4 border-t border-slate-200">
+      {/* Footer Actions */}
+      <div className="p-3 border-t border-slate-200 space-y-1">
+        <button
+          onClick={() => navigate('/')}
+          className="w-full flex items-center gap-2.5 px-3.5 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+        >
+          <ArrowLeft size={16} />
+          <span>{isTa ? 'இணையதளத்திற்குத் திரும்பு' : 'Back to Website'}</span>
+        </button>
+
         <button
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+          className="w-full flex items-center gap-2.5 px-3.5 py-2 rounded-xl text-xs font-medium text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
         >
-          <LogOut size={18} />
-          Logout
+          <LogOut size={16} />
+          <span>{isTa ? 'வெளியேறு (Logout)' : 'Logout'}</span>
         </button>
       </div>
     </div>
@@ -79,17 +154,14 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 bg-white border-r border-slate-200 h-screen sticky top-0">
+      <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 bg-white border-r border-slate-200 h-screen sticky top-0 z-30">
         {content}
       </aside>
 
       {/* Mobile overlay */}
       {isOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
-          <div
-            className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
-            onClick={onClose}
-          />
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
           <aside className="relative w-72 max-w-[85vw] bg-white h-full shadow-2xl flex flex-col">
             {content}
           </aside>
@@ -105,20 +177,58 @@ interface AdminTopbarProps {
 }
 
 export const AdminTopbar: React.FC<AdminTopbarProps> = ({ activeView, onMenuOpen }) => {
-  const labels: Record<AdminView, string> = {
-    dashboard: 'Dashboard',
-    dishes: 'Dish Management',
-    orders: 'Order Management',
+  const { lang, setLang } = useLanguage();
+  const isTa = lang === 'ta';
+
+  const viewTitles: Record<AdminView, { en: string; ta: string }> = {
+    dashboard: { en: 'Dashboard', ta: 'டாஷ்போர்டு' },
+    orders: { en: 'Order Management', ta: 'ஆர்டர்கள் மேலாண்மை' },
+    dishes: { en: 'Dish Management', ta: 'உணவு வகைகள் மேலாண்மை' },
+    customers: { en: 'Customer Management', ta: 'வாடிக்கையாளர்கள் மேலாண்மை' },
+    'menu-pdf': { en: 'Food Menu PDF', ta: 'உணவு மெனு PDF' },
+    messages: { en: 'Customer Messages', ta: 'வாடிக்கையாளர் செய்திகள்' },
+    payments: { en: 'Payments & Revenue', ta: 'கட்டணங்கள் & வசூல்' },
+    invoices: { en: 'Invoices', ta: 'இன்வாய்ஸ்கள்' },
+    settings: { en: 'Settings', ta: 'அமைப்புகள்' },
   };
+
+  const title = viewTitles[activeView] || viewTitles.dashboard;
+
   return (
-    <header className="lg:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 sticky top-0 z-30">
-      <button
-        onClick={onMenuOpen}
-        className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg"
-      >
-        <Menu size={20} />
-      </button>
-      <h1 className="font-semibold text-slate-900 text-base">{labels[activeView]}</h1>
+    <header className="flex items-center justify-between px-4 sm:px-6 py-3.5 bg-white border-b border-slate-200 sticky top-0 z-20">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onMenuOpen}
+          className="lg:hidden p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg cursor-pointer"
+        >
+          <Menu size={20} />
+        </button>
+        <h1 className="font-bold text-slate-900 text-base sm:text-lg">
+          {isTa ? title.ta : title.en}
+        </h1>
+      </div>
+
+      {/* Topbar Language Switcher */}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs font-semibold">
+          <button
+            onClick={() => setLang('ta')}
+            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+              isTa ? 'bg-white text-primary font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            தமிழ்
+          </button>
+          <button
+            onClick={() => setLang('en')}
+            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+              !isTa ? 'bg-white text-primary font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            English
+          </button>
+        </div>
+      </div>
     </header>
   );
 };

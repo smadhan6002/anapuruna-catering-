@@ -18,6 +18,13 @@ function generateDishId(): string {
   return `adm-${String(n).padStart(4, '0')}`;
 }
 
+const UNIT_OVERRIDES_KEY = 'annapoorna_dish_unit_overrides';
+
+export interface DishUnitOverride {
+  defaultUnit: string;
+  supportedUnits?: string[];
+}
+
 export const dishService = {
   getAll(): AdminDish[] {
     try {
@@ -52,4 +59,32 @@ export const dishService = {
     const dishes = this.getAll().filter((d) => d.id !== id);
     localStorage.setItem(DISHES_KEY, JSON.stringify(dishes));
   },
+
+  getUnitOverrides(): Record<string, DishUnitOverride> {
+    try {
+      return JSON.parse(localStorage.getItem(UNIT_OVERRIDES_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  },
+
+  setUnitOverride(dishId: string, defaultUnit: string, supportedUnits?: string[]): void {
+    const overrides = this.getUnitOverrides();
+    overrides[dishId] = { defaultUnit, supportedUnits };
+    localStorage.setItem(UNIT_OVERRIDES_KEY, JSON.stringify(overrides));
+  },
+
+  getDishUnit(dishId: string): DishUnitOverride | undefined {
+    // Check admin dish first
+    const adminDish = this.getAll().find((d) => d.id === dishId);
+    if (adminDish?.defaultUnit) {
+      return {
+        defaultUnit: adminDish.defaultUnit,
+        supportedUnits: adminDish.supportedUnits,
+      };
+    }
+    const overrides = this.getUnitOverrides();
+    return overrides[dishId];
+  },
 };
+
